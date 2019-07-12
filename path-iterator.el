@@ -108,12 +108,6 @@
   state ;; one of nil, 'started, 'complete. Allows detecting interrupted computation.
   )
 
-(cl-defmethod path-iter-contains-root ((iter path-iterator) root)
-  "Return non-nil if ITER roots contain ROOT."
-  (or (member root (path-iter-path-recursive-init iter))
-      (member root (path-iter-path-non-recursive-init iter))
-      ))
-
 (defun path-iter--to-truename (path)
   "Convert each existing element of PATH to an absolute directory file truename,
 return the resulting list.  Elements of PATH are either absolute or
@@ -121,6 +115,10 @@ relative to `default-directory'.
 
 If an element of PATH is nil, `default-directory' is used."
   ;; The nil handling is as defined by the `load-path' doc string.
+  (unless (listp path)
+    ;; Users often specify a single root directory, and forget it's
+    ;; supposed to be a list.
+    (setq path (list path)))
   (let (result)
     (cl-mapc
      (lambda (name)
@@ -128,7 +126,7 @@ If an element of PATH is nil, `default-directory' is used."
 			  (expand-file-name name)
 			default-directory)))
 	 (when (file-directory-p absname)
-	   (push (directory-file-name (file-truename absname)) result))
+	   (push (file-name-as-directory (file-truename absname)) result))
 	 ))
      path)
     (nreverse result)))
@@ -150,9 +148,9 @@ name. Symlinks in the directory part are resolved, but the
 nondirectory part is the link name if it is a symlink.
 
 The directories returned by `path-iter-next' are absolute
-directory file truenames; they contain forward slashes, do
-not end in a slash, have casing that matches the existing
-directory file name, and resolve simlinks (see `file-truename')."
+directory file truenames; they contain forward slashes, end in a
+slash, have casing that matches the existing directory file name,
+and resolve simlinks (see `file-truename')."
   (cond
    ((and (listp (path-iter-visited iter))
 	 (not (null (path-iter-path-recursive iter))))
@@ -178,7 +176,7 @@ directory file name, and resolve simlinks (see `file-truename')."
 		       ;; `ignore-function' wants the link name.
 		       (and (path-iter-ignore-function iter)
 			    (funcall (path-iter-ignore-function iter) absname)))
-	     (push (file-truename absname) subdirs))
+	     (push (file-name-as-directory (file-truename absname)) subdirs))
 	   )
 	 (directory-files result t))
 
@@ -271,8 +269,10 @@ Return a list of absolute filenames or nil if none found."
        (file-name-all-completions filename dir)))
     result))
 
-(defun path-iter-all-files (iter)
-  "Return all filenames in ITER (a `path-iterator' object."
+(cl-defmethod path-iter-files ((iter path-iterator) pred)
+  "Return all filenames in ITER satisfying predicate PRED.
+If non-nil, PRED is a function taking a single absolute file
+name; the file is included if PRED returns non-nil"
   (let (dir result)
     (path-iter-restart iter)
 
@@ -281,7 +281,9 @@ Return a list of absolute filenames or nil if none found."
        (lambda (absfile)
 	 (when (and (not (string-equal "." (substring absfile -1)))
 		    (not (string-equal ".." (substring absfile -2)))
-		    (not (file-directory-p absfile)))
+		    (not (file-directory-p absfile))
+                    (or (null pred)
+                        (funcall pred absfile)))
 	   (push absfile result)))
        (directory-files dir t))
       )
